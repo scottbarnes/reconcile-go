@@ -5,11 +5,11 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 
 	"github.com/buger/jsonparser"
+	_ "github.com/mattn/go-sqlite3" // See https://earthly.dev/blog/golang-sqlite/ for an explanation of this side effect.
 )
 
 // For each line
@@ -18,7 +18,7 @@ import (
 
 const (
 	PREFIX string = "978"
-	DBNAME string = "reconcile-go.db"
+	DBNAME string = "reconcile-go.db?_sync=0"
 )
 
 type OpenLibraryEdition struct {
@@ -58,13 +58,14 @@ func (o *OpenLibraryEdition) toIsbn13() error {
 
 // Unmartial JSON data from the Open Library dump into an *OpenLibraryEdition.
 func (o *OpenLibraryEdition) unmartialJSON(jsonData []byte) error {
+	var innerErr error
 	jsonparser.EachKey(jsonData, func(i int, v []byte, vt jsonparser.ValueType, err error) {
 		if err != nil {
 			return
 		}
 
 		if vt == jsonparser.Null || vt == jsonparser.NotExist {
-			fmt.Println("missing data")
+			innerErr = err
 			return
 		}
 
@@ -72,7 +73,7 @@ func (o *OpenLibraryEdition) unmartialJSON(jsonData []byte) error {
 		case 0: // key
 			key, err := jsonparser.ParseString(v)
 			if err != nil {
-				fmt.Println("error: ", err)
+				innerErr = err
 				return
 			}
 			o.olid = getOlidFromKey(key)
@@ -80,21 +81,21 @@ func (o *OpenLibraryEdition) unmartialJSON(jsonData []byte) error {
 		case 1: // ocaid
 			o.ocaid, err = jsonparser.ParseString(v)
 			if err != nil {
-				fmt.Println("error: ", err)
+				innerErr = err
 				return
 			}
 
 		case 2: // isbn_10
 			o.isbn10, err = getFirstIsbnFromArray(v)
 			if err != nil {
-				fmt.Println("error: ", err)
+				innerErr = err
 				return
 			}
 
 		case 3: // isbn_13
 			o.isbn13, err = getFirstIsbnFromArray(v)
 			if err != nil {
-				fmt.Println("error: ", err)
+				innerErr = err
 				return
 			}
 		}
@@ -103,12 +104,11 @@ func (o *OpenLibraryEdition) unmartialJSON(jsonData []byte) error {
 	// If there's an ISBN 13 and no ISBN 13, try to convert 10 to 13.
 	if o.isbn13 == "" && o.isbn10 != "" {
 		if err := o.toIsbn13(); err != nil {
-			fmt.Println(err)
 			return err
 		}
 	}
 
-	return nil
+	return innerErr
 }
 
 // getOlidFromKey() takes /books/OL1234M and returns OL1234M.
@@ -133,7 +133,9 @@ func parseOLLine(line []byte) (*OpenLibraryEdition, error) {
 	jsonData := columns[4]
 
 	o := OpenLibraryEdition{}
-	o.unmartialJSON(jsonData)
+	if err := o.unmartialJSON(jsonData); err != nil {
+		return nil, err
+	}
 
 	return &o, nil
 }
@@ -141,7 +143,8 @@ func parseOLLine(line []byte) (*OpenLibraryEdition, error) {
 // readFile() reads a file in chunks and sends them to editionsCh for reading.
 // TODO: Add go routines for the parsing and re-benchmark.
 // May need to adjust buffer/chunk size of reader or scanner. Figure out that interaction.
-func readFile(r io.Reader, editionsCh chan<- *OpenLibraryEdition, errCh chan<- error, doneCh chan<- struct{}) {
+func readFile(r io.Reader, editionsCh chan<- *OpenLibraryEdition, errCh chan<- error) {
+	defer close(editionsCh)
 	var count int64
 
 	sc := bufio.NewScanner(r)
@@ -162,28 +165,26 @@ func readFile(r io.Reader, editionsCh chan<- *OpenLibraryEdition, errCh chan<- e
 		}
 
 		// Another option is to ensure this isn't somehow nil.
+		// TODO: Figure out how nil even gets here.
 		if edition == nil {
 			continue
 		}
 		editionsCh <- edition
 	}
 
-	close(editionsCh)
-	close(doneCh)
-	fmt.Println("Total number of lines processed: ", count)
-	fmt.Println("Finish parsing file")
+	// fmt.Println("Total number of lines processed: ", count)
 }
 
 // getFirstIsbnFromArray() reads a []byte of ISBNs in the form ["12345", "67890"]
 // and returns the first one.
 func getFirstIsbnFromArray(isbns []byte) (string, error) {
 	var parsedIsbns []string
+	var innerErr error
 
 	// This is a wastful implementation. Could just read to the first comma and strip quotes.
 	jsonparser.ArrayEach(isbns, func(element []byte, _ jsonparser.ValueType, _ int, err error) {
 		if err != nil {
-			// TODO: fix error handling.
-			fmt.Println("array parsing error: ", err)
+			innerErr = err
 		}
 
 		parsedIsbns = append(parsedIsbns, string(element))
@@ -192,15 +193,17 @@ func getFirstIsbnFromArray(isbns []byte) (string, error) {
 	// Test for length only once the array values are parsed from the bytes; otherwise empty errays are literally
 	// the byte values of "[" and "]", and have lengths of 2.
 	if len(parsedIsbns) <= 0 {
-		return "", nil
+		return "", nil // Not interested in logging editions with isbn_10 = [], etc.
 	}
 
-	return parsedIsbns[0], nil
+	return parsedIsbns[0], innerErr
 }
 
-func addEditionsToDB(edition *OpenLibraryEdition, db *sql.DB, errCh chan<- error) {
+func addEditionsToDB(edition *OpenLibraryEdition, db *sql.DB) error {
 	_, err := db.Exec("INSERT INTO ol VALUES(NULL, ?, ?, ?);", &edition.olid, &edition.ocaid, &edition.isbn13)
 	if err != nil {
-		errCh <- err
+		return err
 	}
+
+	return nil
 }

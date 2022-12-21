@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	_ "github.com/mattn/go-sqlite3" // See https://earthly.dev/blog/golang-sqlite/ for an explanation of this side effect.
@@ -20,19 +21,17 @@ func main() {
 	}
 
 	// Run the actual program.
-	if err := run(*inFile); err != nil {
+	if err := run(*inFile, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(inFile string) error {
+func run(inFile string, out io.Writer) error {
 	// Create channels
 	errCh := make(chan error)
 	doneCh := make(chan struct{})
 	editionsCh := make(chan *OpenLibraryEdition)
-
-	// wg := sync.WaitGroup{}
 
 	// Get database
 	db, err := getDB(DBNAME)
@@ -46,21 +45,30 @@ func run(inFile string) error {
 	}
 
 	// Parse the file sending the results to editionsCh for database insertion.
-	go readFile(f, editionsCh, errCh, doneCh)
+	go func() {
+		defer close(doneCh)
+		defer f.Close()
+		readFile(f, editionsCh, errCh)
+	}()
 
 	// Read from channels to get errors and recieve + insert DB items
 	for {
 		select {
 		case err := <-errCh:
-			// return err
-			fmt.Println(err)
+			return err
 		case edition := <-editionsCh:
 			// Could this use bundled []editions for performance?
-			addEditionsToDB(edition, db, errCh)
-			// This must come last because this channel is closed in the file parser, but there will always be an edition until that's empty, so it can't get to the doneCh. I think.
+			if edition == nil {
+				continue
+			}
+
+			err := addEditionsToDB(edition, db)
+			if err != nil {
+				return err
+			}
 		case <-doneCh:
-			f.Close()
-			fmt.Println("All done.")
+			// This must come last because this channel is closed in the file parser, but there will always be an edition until that's empty, so it can't get to the doneCh. I think.
+			fmt.Fprintln(out, "All done.")
 			return nil
 		}
 	}

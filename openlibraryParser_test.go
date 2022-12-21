@@ -119,7 +119,6 @@ func TestReadFile(t *testing.T) {
 	var resEditions []*OpenLibraryEdition
 
 	errCh := make(chan error)
-	doneCh := make(chan struct{})
 	editionsCh := make(chan *OpenLibraryEdition)
 
 	f, err := os.Open("./testdata/seed_ol_dump_latest.txt")
@@ -127,7 +126,7 @@ func TestReadFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	go readFile(f, editionsCh, errCh, doneCh)
+	go readFile(f, editionsCh, errCh)
 
 	for edition := range editionsCh {
 		resEditions = append(resEditions, edition)
@@ -151,7 +150,6 @@ func TestAddEditionsToDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	errCh := make(chan error)
 	testEditions := expEditions
 	expDBItems := []struct {
 		olid   string
@@ -164,7 +162,7 @@ func TestAddEditionsToDB(t *testing.T) {
 	}
 
 	for _, edition := range testEditions {
-		addEditionsToDB(edition, db, errCh)
+		addEditionsToDB(edition, db)
 	}
 
 	// Query DB to get items added from channel.

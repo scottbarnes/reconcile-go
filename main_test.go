@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"testing"
 )
 
@@ -17,7 +18,7 @@ func TestToIsbn13(t *testing.T) {
 
 func BenchmarkRun(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if err := run("./testdata/30kTestEditions.txt"); err != nil {
+		if err := run("./testdata/30kTestEditions.txt", io.Discard); err != nil {
 			b.Error(err)
 		}
 	}

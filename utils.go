@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"strconv"
 	"strings"
 )
@@ -23,6 +24,10 @@ func getIsbn13CheckDigit(isbn string) (string, error) {
 
 		val, err := strconv.Atoi(v)
 		if err != nil {
+			// Ignore errors that crop up from trying to convert characters such as "w" or "/".
+			if errors.Is(err, strconv.ErrSyntax) {
+				return "", nil
+			}
 			return "", err
 		}
 
