@@ -56,6 +56,11 @@ func getDB(dbName string) (*sql.DB, error) {
 		return nil, err
 	}
 
+	err = db.Ping()
+	if err != nil {
+		return nil, err
+	}
+
 	// Initalize the DB if necessary.
 	if _, err := db.Exec(OLSCHEMA); err != nil {
 		return nil, err

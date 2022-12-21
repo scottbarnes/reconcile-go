@@ -9,17 +9,14 @@ import (
 	"strings"
 
 	"github.com/buger/jsonparser"
-	_ "github.com/mattn/go-sqlite3" // See https://earthly.dev/blog/golang-sqlite/ for an explanation of this side effect.
+	_ "github.com/mattn/go-sqlite3" // See http://go-database-sql.org/importing.html for an explanation of this side effect.
 )
 
 // For each line
 // - run unmasher method on OpenLibraryEdition struct.
 // - send struct to channel.
 
-const (
-	PREFIX string = "978"
-	DBNAME string = "reconcile-go.db?_sync=0"
-)
+const PREFIX string = "978"
 
 type OpenLibraryEdition struct {
 	olid   string

@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3" // See https://earthly.dev/blog/golang-sqlite/ for an explanation of this side effect.
+	_ "github.com/mattn/go-sqlite3" // See http://go-database-sql.org/importing.html for an explanation of this side effect.
 )
 
 var expEditions = []*OpenLibraryEdition{

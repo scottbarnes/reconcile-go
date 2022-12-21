@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-
-	_ "github.com/mattn/go-sqlite3" // See https://earthly.dev/blog/golang-sqlite/ for an explanation of this side effect.
 )
+
+// Set some SQLite options, per https://avi.im/blag/2021/fast-sqlite-inserts/
+// sqlite3 options at https://github.com/mattn/go-sqlite3#connection-string
+const DBNAME string = "reconcile-go.db?_sync=0&_journal=WAL"
 
 func main() {
 	// Flags
