@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"testing"
@@ -126,7 +127,13 @@ func TestReadFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	go readFile(f, editionsCh, errCh)
+	go func() {
+		defer close(editionsCh)
+		err := readFile(f, editionsCh)
+		if err != nil {
+			errCh <- err
+		}
+	}()
 
 	for edition := range editionsCh {
 		resEditions = append(resEditions, edition)
@@ -161,8 +168,13 @@ func TestAddEditionsToDB(t *testing.T) {
 		{"OL16775850M", "seals0000bekk", "9781590368930"},
 	}
 
+	stmt, err := db.Prepare("INSERT INTO ol VALUES(NULL, ?, ?, ?)")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for _, edition := range testEditions {
-		addEditionsToDB(edition, db)
+		addEditionsToDB(edition, stmt)
 	}
 
 	// Query DB to get items added from channel.
@@ -193,3 +205,67 @@ func TestAddEditionsToDB(t *testing.T) {
 		count++
 	}
 }
+
+// This is broken and does not appear to reflect actual time/op.
+// For some reason it gets drastically lower time/op the higher the number of iterations are.
+func BenchmarkReadAndParse(b *testing.B) {
+	editionsCh := make(chan *OpenLibraryEdition)
+
+	f, err := os.Open("./testdata/50kTestEditions.txt")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var count int
+	// Just consume editions as fast as possible.
+	go func() {
+		for {
+			count++
+			fmt.Println("count is: ", count)
+			<-editionsCh
+		}
+	}()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err := readFile(f, editionsCh)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkAddEditionToDB(b *testing.B) {
+	o := &OpenLibraryEdition{olid: "OL123M", ocaid: "IA123", isbn10: "", isbn13: "1111111111111"}
+	// const TESTDB string = "reconcile-go.db?_sync=0&_journal=WAL"
+	const TESTDB = ":memory:?_sync=0&_journal=WAL"
+	db, err := getDB(TESTDB)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	stmt, err := db.Prepare("INSERT INTO ol VALUES(NULL, ?, ?, ?)")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		addEditionsToDB(o, stmt)
+	}
+}
+
+// func BenchmarkUnbufferedChannelEmptyStruct(b *testing.B) {
+// 	ch := make(chan struct{})
+// 	var count int
+// 	go func() {
+// 		for {
+// 			count++
+// 			fmt.Println("count is:", count)
+// 			<-ch
+// 		}
+// 	}()
+// 	for i := 0; i < b.N; i++ {
+// 		ch <- struct{}{}
+// 	}
+// }

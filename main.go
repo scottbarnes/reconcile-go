@@ -49,8 +49,12 @@ func run(inFile string, out io.Writer) error {
 	// Parse the file sending the results to editionsCh for database insertion.
 	go func() {
 		defer close(doneCh)
+		defer close(editionsCh)
 		defer f.Close()
-		readFile(f, editionsCh, errCh)
+		err := readFile(f, editionsCh)
+		if err != nil {
+			errCh <- err
+		}
 	}()
 
 	// Read from channels to get errors and recieve + insert DB items
@@ -64,7 +68,12 @@ func run(inFile string, out io.Writer) error {
 				continue
 			}
 
-			err := addEditionsToDB(edition, db)
+			stmt, err := db.Prepare("INSERT INTO ol VALUES(NULL, ?, ?, ?)")
+			if err != nil {
+				return err
+			}
+
+			err = addEditionsToDB(edition, stmt)
 			if err != nil {
 				return err
 			}

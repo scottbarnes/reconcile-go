@@ -140,8 +140,7 @@ func parseOLLine(line []byte) (*OpenLibraryEdition, error) {
 // readFile() reads a file in chunks and sends them to editionsCh for reading.
 // TODO: Add go routines for the parsing and re-benchmark.
 // May need to adjust buffer/chunk size of reader or scanner. Figure out that interaction.
-func readFile(r io.Reader, editionsCh chan<- *OpenLibraryEdition, errCh chan<- error) {
-	defer close(editionsCh)
+func readFile(r io.Reader, editionsCh chan<- *OpenLibraryEdition) error {
 	var count int64
 
 	sc := bufio.NewScanner(r)
@@ -156,20 +155,16 @@ func readFile(r io.Reader, editionsCh chan<- *OpenLibraryEdition, errCh chan<- e
 			if errors.Is(err, ErrorNotEdition) {
 				continue
 			} else {
-				errCh <- err
-				continue
+				return err
 			}
 		}
 
-		// Another option is to ensure this isn't somehow nil.
-		// TODO: Figure out how nil even gets here.
-		if edition == nil {
-			continue
-		}
 		editionsCh <- edition
 	}
 
+	// fmt.Println("returning readFile()")
 	// fmt.Println("Total number of lines processed: ", count)
+	return nil
 }
 
 // getFirstIsbnFromArray() reads a []byte of ISBNs in the form ["12345", "67890"]
@@ -196,8 +191,8 @@ func getFirstIsbnFromArray(isbns []byte) (string, error) {
 	return parsedIsbns[0], innerErr
 }
 
-func addEditionsToDB(edition *OpenLibraryEdition, db *sql.DB) error {
-	_, err := db.Exec("INSERT INTO ol VALUES(NULL, ?, ?, ?);", &edition.olid, &edition.ocaid, &edition.isbn13)
+func addEditionsToDB(edition *OpenLibraryEdition, stmt *sql.Stmt) error {
+	_, err := stmt.Exec(&edition.olid, &edition.ocaid, &edition.isbn13)
 	if err != nil {
 		return err
 	}

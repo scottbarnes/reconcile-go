@@ -41,7 +41,7 @@ func getIsbn13CheckDigit(isbn string) (string, error) {
 	return checkDigit, nil
 }
 
-// getDB gets a SQLite DB based on the name, such as ":MEMORY:".
+// getDB gets a SQLite DB based on the name, such as ":memory:".
 func getDB(dbName string) (*sql.DB, error) {
 	OLSCHEMA := `
   CREATE TABLE IF NOT EXISTS ol (
@@ -65,5 +65,6 @@ func getDB(dbName string) (*sql.DB, error) {
 	if _, err := db.Exec(OLSCHEMA); err != nil {
 		return nil, err
 	}
+
 	return db, nil
 }
