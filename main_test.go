@@ -23,3 +23,11 @@ func BenchmarkRun(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkRunSeq(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		if err := runSeq("./testdata/50kTestEditions.txt", io.Discard); err != nil {
+			b.Error(err)
+		}
+	}
+}

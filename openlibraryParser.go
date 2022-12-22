@@ -119,14 +119,21 @@ func getOlidFromKey(key string) string {
 func parseOLLine(line []byte) (*OpenLibraryEdition, error) {
 	columns := bytes.Split(line, []byte("\t"))
 	if len(columns) != 5 {
+		// fmt.Println("")
+		// s := string(line)
+		// fmt.Println(s)
 		return nil, ErrorWrongColCount
 	}
 
 	// bytes == "/type/edition". Is assigning this here causing excess memory allocation? Is it faster defined elsewhere?
 	editionType := []byte{47, 116, 121, 112, 101, 47, 101, 100, 105, 116, 105, 111, 110}
 	if res := bytes.Compare(columns[0], editionType); res != 0 {
+		// fmt.Println("")
+		// s := string(line)
+		// fmt.Println(s)
 		return nil, ErrorNotEdition
 	}
+
 	jsonData := columns[4]
 
 	o := OpenLibraryEdition{}

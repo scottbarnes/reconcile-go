@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ const DBNAME string = "reconcile-go.db?_sync=0&_journal=WAL"
 
 func main() {
 	// Flags
+	runType := flag.String("type", "", "Which iteration of run() to use")
 	inFileOL := flag.String("oldump", "", "Open Library ALL dump file")
 	flag.Parse()
 
@@ -22,10 +24,18 @@ func main() {
 		inFile = inFileOL
 	}
 
-	// Run the actual program.
-	if err := run(*inFile, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	switch *runType {
+	case "original":
+		// Run the actual program.
+		if err := run(*inFile, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "runSeq":
+		if err := runSeq(*inFile, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -80,6 +90,57 @@ func run(inFile string, out io.Writer) error {
 		case <-doneCh:
 			// This must come last because this channel is closed in the file parser, but there will always be an edition until that's empty, so it can't get to the doneCh. I think.
 			fmt.Fprintln(out, "All done.")
+			return nil
+		}
+	}
+}
+
+func runSeq(inFile string, out io.Writer) error {
+	f, err := os.Open(inFile)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	linesCh := make(chan []byte)
+	editionsCh := make(chan *OpenLibraryEdition)
+	errCh := make(chan error)
+	doneCh := make(chan struct{})
+
+	go func() {
+		defer close(linesCh)
+		// Send lines straight to a channel for the parser(s) to pick up.
+		const maxCapacity = 1024 * 1024
+		buf := make([]byte, maxCapacity)
+
+		sc := bufio.NewScanner(f)
+		sc.Buffer(buf, 1024*1024)
+		for sc.Scan() {
+			linesCh <- sc.Bytes()
+		}
+	}()
+
+	go func() {
+		defer close(doneCh)
+		for line := range linesCh {
+			edition, err := parseOLLine(line)
+			if err != nil {
+				errCh <- fmt.Errorf("parsing error: %w", err)
+			}
+			editionsCh <- edition
+		}
+	}()
+
+	// This would be where they're inserted into the DB, but that's not relevant here.
+	var editionCount int
+	for {
+		select {
+		case err := <-errCh:
+			fmt.Fprintln(out, err)
+		case <-editionsCh:
+			editionCount++
+		case <-doneCh:
+			fmt.Fprintln(out, "total count: ", editionCount)
 			return nil
 		}
 	}
