@@ -104,7 +104,7 @@ func runSeq(inFile string, out io.Writer) error {
 	}
 	defer f.Close()
 
-	linesCh := make(chan []byte, 256)
+	linesCh := make(chan [][]byte, 256)
 	editionsCh := make(chan *OpenLibraryEdition, 256)
 	errCh := make(chan error, 5)
 	doneCh := make(chan struct{})
@@ -113,14 +113,34 @@ func runSeq(inFile string, out io.Writer) error {
 	go func() {
 		defer close(linesCh)
 		// Send lines straight to a channel for the parser(s) to pick up.
-		const maxCapacity = 100 * 100 * 1000 // This size gets through the "ALL" dump.
-		buf := make([]byte, maxCapacity)
-
+		// const maxCapacity = 100 * 100 * 1000 // This size gets through the "ALL" dump.
+		// buf := make([]byte, maxCapacity)
+		buf := make([]byte, 0, 1024*1024)
 		sc := bufio.NewScanner(f)
-		sc.Buffer(buf, 1)
+		sc.Buffer(buf, 100*1024*1024)
+		linePacket := make([][]byte, 1024)
+		count := 0
+		// totalLines := 0
+
+		// Gather lines into packets, and when the packet is full, send it through the channel, then
+		// reset the count and packet.
 		for sc.Scan() {
-			linesCh <- sc.Bytes()
+			if count < 1023 {
+				// linePacket = append(linePacket, sc.Bytes())
+				linePacket[count] = sc.Bytes()
+				count++
+				// totalLines++
+				// fmt.Println("count: ", count)
+			} else {
+				// linePacket = append(linePacket, sc.Bytes()) // if not included the line is 'lost'.
+				linePacket[count] = sc.Bytes()
+				linesCh <- linePacket
+				count = 0
+				// totalLines++
+				// linePacket = linePacket[0:0]
+			}
 		}
+		// fmt.Println("total lines: ", totalLines)
 	}()
 
 	for i := 0; i < runtime.NumCPU(); i++ {
@@ -129,12 +149,15 @@ func runSeq(inFile string, out io.Writer) error {
 		go func() {
 			defer wg.Done()
 
-			for line := range linesCh {
-				edition, err := parseOLLine(line)
-				if err != nil {
-					errCh <- fmt.Errorf("parsing error: %w", err)
+			// Continually fetch lines packets and iterate through them.
+			for lines := range linesCh {
+				for _, line := range lines {
+					edition, err := parseOLLine(line)
+					if err != nil {
+						errCh <- fmt.Errorf("parsing error: %w", err)
+					}
+					editionsCh <- edition
 				}
-				editionsCh <- edition
 			}
 		}()
 	}
