@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
+	"sync"
 )
 
 // Set some SQLite options, per https://avi.im/blag/2021/fast-sqlite-inserts/
@@ -102,33 +104,44 @@ func runSeq(inFile string, out io.Writer) error {
 	}
 	defer f.Close()
 
-	linesCh := make(chan []byte)
-	editionsCh := make(chan *OpenLibraryEdition)
-	errCh := make(chan error)
+	linesCh := make(chan []byte, 256)
+	editionsCh := make(chan *OpenLibraryEdition, 256)
+	errCh := make(chan error, 5)
 	doneCh := make(chan struct{})
+	wg := sync.WaitGroup{}
 
 	go func() {
 		defer close(linesCh)
 		// Send lines straight to a channel for the parser(s) to pick up.
-		const maxCapacity = 1024 * 1024
+		const maxCapacity = 100 * 100 * 1000 // This size gets through the "ALL" dump.
 		buf := make([]byte, maxCapacity)
 
 		sc := bufio.NewScanner(f)
-		sc.Buffer(buf, 1024*1024)
+		sc.Buffer(buf, 1)
 		for sc.Scan() {
 			linesCh <- sc.Bytes()
 		}
 	}()
 
-	go func() {
-		defer close(doneCh)
-		for line := range linesCh {
-			edition, err := parseOLLine(line)
-			if err != nil {
-				errCh <- fmt.Errorf("parsing error: %w", err)
+	for i := 0; i < runtime.NumCPU(); i++ {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for line := range linesCh {
+				edition, err := parseOLLine(line)
+				if err != nil {
+					errCh <- fmt.Errorf("parsing error: %w", err)
+				}
+				editionsCh <- edition
 			}
-			editionsCh <- edition
-		}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(doneCh)
 	}()
 
 	// This would be where they're inserted into the DB, but that's not relevant here.

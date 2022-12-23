@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
 	"io"
+	"os"
 	"testing"
 )
 
@@ -26,8 +29,29 @@ func BenchmarkRun(b *testing.B) {
 
 func BenchmarkRunSeq(b *testing.B) {
 	for i := 0; i < b.N; i++ {
+		// if err := runSeq("/home/scott/code/reconcile/files/ol_dump_latest.txt", io.Discard); err != nil {
 		if err := runSeq("./testdata/50kTestEditions.txt", io.Discard); err != nil {
 			b.Error(err)
 		}
 	}
+}
+
+func BenchmarkPureRead(b *testing.B) {
+	f, err := os.Open("./testdata/50kTestEditions.txt")
+	// f, err := os.Open("/home/scott/code/reconcile/files/ol_dump_latest.txt")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	const maxCapacity = 100 * 100 * 1000 // This size gets through the "ALL" dump.
+	buf := make([]byte, maxCapacity)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(buf, 1)
+
+	b.ResetTimer()
+	var lines int
+	for sc.Scan() {
+		lines++
+	}
+	fmt.Println("Lines: ", lines)
 }
