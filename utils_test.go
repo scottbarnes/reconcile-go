@@ -1,9 +1,11 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 )
 
+// TestCheckDigit13 verifies a few check digits for ISBN 13.
 func TestCheckDigit13(t *testing.T) {
 	tests := []struct {
 		isbn string
@@ -22,6 +24,29 @@ func TestCheckDigit13(t *testing.T) {
 
 		if res != tc.exp {
 			t.Fatalf("Expected %s, but got %s", tc.exp, res)
+		}
+	}
+}
+
+// TestGetChunks parses a test file for comparison against predetermined
+// outputs.
+func TestGetChunks(t *testing.T) {
+	CHUNKSIZE := int64(2200)
+
+	expChunks := []*Chunk{
+		{filename: "./testdata/chunkTestData.txt", start: 0, end: 2475},
+		{filename: "./testdata/chunkTestData.txt", start: 2476, end: 4924},
+		{filename: "./testdata/chunkTestData.txt", start: 4925, end: 6968},
+	}
+
+	resChunks, err := getChunks(CHUNKSIZE, "./testdata/chunkTestData.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i, resChunk := range resChunks {
+		if !reflect.DeepEqual(resChunk, expChunks[i]) {
+			t.Fatalf("Expected %v, but got %v", expChunks[i], resChunk)
 		}
 	}
 }

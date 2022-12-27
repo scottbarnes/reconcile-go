@@ -16,6 +16,7 @@ var expEditions = []*OpenLibraryEdition{
 	{"OL16775850M", "seals0000bekk", "", "9781590368930"},
 }
 
+// TestParseOLLine attempts to check for various ways parsing can go wrong.
 func TestParseOLLine(t *testing.T) {
 	tests := []struct {
 		name       string

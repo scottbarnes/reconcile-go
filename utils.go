@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -67,4 +68,84 @@ func getDB(dbName string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// Chunk provides an interface for working with files in need of parsing.
+type Chunk struct {
+	filename string
+	start    int64
+	end      int64
+	// Possibly add parserFunc, so the OL or IA parser func can be added.
+}
+
+func NewChunk(filename string, start int64, end int64) *Chunk {
+	return &Chunk{
+		filename: filename,
+		start:    start,
+		end:      end,
+	}
+}
+
+// Read a file and break it into chunks of start+end offsets in
+// bytes so that the file can be read in chunks.
+// Chunks start/end on a new line character.
+func getChunks(chunkSize int64, filename string) ([]*Chunk, error) {
+	chunks := []*Chunk{}
+	readAhead := int64(10 * 1000)
+	chunkEndOffset := int64(0)
+	chunkStart := int64(0) // Gets value from previous chunkEndOffset
+	readAheadBuf := make([]byte, readAhead)
+
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	fstat, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	fileEnd := fstat.Size()
+
+	// Iterate through the file by chunkSize (plus a bit more to seek for
+	// the newline). Do this by seeking to (near) the new chunkEnd, then
+	// read a bit more and look for a newline.
+	for {
+		chunkEndOffset += chunkSize
+
+		// At the end of the file, create the last chunk and break out of the loop.
+		if chunkEndOffset >= fileEnd {
+			chunk := NewChunk(filename, chunkStart, fileEnd)
+			chunks = append(chunks, chunk)
+			break
+		}
+
+		// Seek to (near) the new chunkEndOffset, and then fill readAheadBuf
+		// to look for '\n'.
+		currentOffset, err := f.Seek(chunkEndOffset, 0)
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = f.Read(readAheadBuf)
+		if err != nil {
+			return nil, err
+		}
+
+		// Find the next newline and use it to complete the new chunkEndOffset.
+		// TODO: make it so this handles the case of a newline NOT being found
+		// in readAheadBuf.
+		for i := range readAheadBuf {
+			if readAheadBuf[i] == '\n' {
+				chunkEndOffset = currentOffset + int64(i)
+				chunk := NewChunk(filename, chunkStart, chunkEndOffset)
+				chunks = append(chunks, chunk)
+				chunkStart = chunkEndOffset + 1
+				break
+			}
+		}
+	}
+
+	return chunks, nil
 }
