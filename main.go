@@ -204,30 +204,37 @@ func (c *Chunk) Process(editionCh chan<- *OpenLibraryEdition, errCh chan<- error
 	f.Seek(c.start, 0)
 	var byteCount int64
 
-	// sc := bufio.NewScanner(c.file)
-	// // buf := make([]byte, 1000*1000)
-	// // sc.Buffer(buf, 1)
-	// for sc.Scan() {
-	// 	// buf = nil
-	// 	line := sc.Bytes()
-	r := bufio.NewReader(f)
-	// r.Reset(r)
-	for {
+	sc := bufio.NewScanner(f)
+	buf := make([]byte, 1000*1000)
+	sc.Buffer(buf, 1)
+	for sc.Scan() {
+		// buf = nil
+		line := sc.Bytes()
+		// r := bufio.NewReader(f)
+		// r.Reset(r)
+		// for {
 
-		// if err := sc.Err(); err != nil {
-		// 	errCh <- fmt.Errorf("scanner error: %w", err)
-		// 	continue
-		// }
-		line, err := r.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				fmt.Println("Hit end of file")
-				return
-			}
+		// Keep track of bytes read and exit once the number exceeds c.end.
+		byteCount += int64(len(line))
+		if c.start+byteCount > c.end {
+			fmt.Println("breaking at chunk limit")
+			break
+		}
 
-			errCh <- err
+		if err := sc.Err(); err != nil {
+			errCh <- fmt.Errorf("scanner error: %w", err)
 			continue
 		}
+		// line, err := r.ReadBytes('\n')
+		// if err != nil {
+		// 	if err == io.EOF {
+		// 		fmt.Println("Hit end of file")
+		// 		return
+		// 	}
+
+		// 	errCh <- err
+		// 	continue
+		// }
 
 		edition, err := parseOLLine(line)
 		if err != nil {
@@ -237,16 +244,10 @@ func (c *Chunk) Process(editionCh chan<- *OpenLibraryEdition, errCh chan<- error
 			} else {
 				errCh <- err
 			}
+			// }
 		}
 
 		editionCh <- edition
-
-		// Keep track of bytes read and exit once the number exceeds c.end.
-		byteCount += int64(len(line))
-		if c.start+byteCount >= c.end {
-			fmt.Println("breaking at chunk limit")
-			break
-		}
 	}
 }
 
