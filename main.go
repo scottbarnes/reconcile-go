@@ -193,7 +193,7 @@ func runSeq(inFile string, out io.Writer) error {
 	}
 }
 
-func (c *Chunk) Process(editionCh chan<- *OpenLibraryEdition, errCh chan<- error) {
+func (c *Chunk) Process(editionsCh chan<- *OpenLibraryEdition, errCh chan<- error) {
 	f, err := os.Open(c.filename)
 	if err != nil {
 		errCh <- err
@@ -202,7 +202,10 @@ func (c *Chunk) Process(editionCh chan<- *OpenLibraryEdition, errCh chan<- error
 	defer f.Close()
 
 	f.Seek(c.start, 0)
-	var byteCount int64
+	// var byteCount int64
+	byteCount := int64(-1)
+
+	// var lastByteCount int64
 
 	sc := bufio.NewScanner(f)
 	buf := make([]byte, 1000*1000)
@@ -215,9 +218,13 @@ func (c *Chunk) Process(editionCh chan<- *OpenLibraryEdition, errCh chan<- error
 		// for {
 
 		// Keep track of bytes read and exit once the number exceeds c.end.
-		byteCount += int64(len(line))
+		byteCount += int64(len(line) + 1)
+
 		if c.start+byteCount > c.end {
-			fmt.Println("breaking at chunk limit")
+			// fmt.Println("breaking at chunk limit.")
+			// fmt.Println("last end    ", byteCount)
+			// fmt.Println("Chunk end:  ", c.end)
+			// fmt.Println("Cur end   : ", c.start+byteCount)
 			break
 		}
 
@@ -247,14 +254,27 @@ func (c *Chunk) Process(editionCh chan<- *OpenLibraryEdition, errCh chan<- error
 			// }
 		}
 
-		editionCh <- edition
+		editionsCh <- edition
 	}
 }
 
 func runSeek(inFile string, out io.Writer) error {
-	chunksCh := make(chan *Chunk, 20)
+	chunkSize := int64(1000 * 1000 * 1000)
+	// chunkSize := int64(10 * 1000 * 1000)
+	// chunkSize := int64(49 * 1000 * 1000)
+	// chunkSize := int64(1000 * 1000)
 	editionsCh := make(chan *OpenLibraryEdition, 256)
 	errCh := make(chan error, 5)
+	go tempAddEditionsToDB(editionsCh)
+	if err := getEditions(inFile, out, editionsCh, errCh, chunkSize); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getEditions(inFile string, out io.Writer, editionsCh chan<- *OpenLibraryEdition, errCh chan error, chunkSize int64) error {
+	chunksCh := make(chan *Chunk, 20)
 	doneCh := make(chan struct{})
 	wg := sync.WaitGroup{}
 
@@ -264,15 +284,18 @@ func runSeek(inFile string, out io.Writer) error {
 	}
 	defer f.Close()
 
-	chunks, err := getChunks(CHUNKSIZE, inFile)
+	chunks, err := getChunks(chunkSize, inFile)
 	if err != nil {
 		return err
 	}
-	fmt.Println("chunks are: ", chunks)
+
+	// for _, chunk := range chunks {
+	// 	fmt.Printf("chunks are: %#v", chunk)
+	// }
 
 	go func() {
 		for _, chunk := range chunks {
-			fmt.Println(chunk)
+			// fmt.Println(chunk)
 			chunksCh <- chunk
 		}
 		defer close(chunksCh)
@@ -280,7 +303,7 @@ func runSeek(inFile string, out io.Writer) error {
 
 	// Spin up one GoRoutine per processor and grab chunks until they're gone.
 	for i := 0; i < runtime.NumCPU(); i++ {
-		// for i := 0; i < 2; i++ {
+		// for i := 0; i < 1; i++ {
 		wg.Add(1)
 
 		go func() {
@@ -298,21 +321,33 @@ func runSeek(inFile string, out io.Writer) error {
 	// will be sent to editionsCh.
 	go func() {
 		wg.Wait()
-		time.Sleep(5 * time.Second)
+		defer close(editionsCh)
+		time.Sleep(2 * time.Second)
 		defer close(doneCh)
 	}()
 
 	// This would be where they're inserted into the DB, but that's not relevant here.
-	var editionCount int
+	// var editionCount int
 	for {
 		select {
 		case err := <-errCh:
 			fmt.Fprintln(out, err)
-		case <-editionsCh:
-			editionCount++
+		// case <-editionsCh:
+		// 	editionCount++
 		case <-doneCh:
-			fmt.Fprintln(out, "total count: ", editionCount)
+			// fmt.Fprintln(out, "total count: ", editionCount)
 			return nil
 		}
 	}
+}
+
+func tempAddEditionsToDB(editionsCh <-chan *OpenLibraryEdition) {
+	var totalEditions int
+	for edition := range editionsCh {
+		// for range editionsCh {
+		totalEditions++
+		fmt.Println(edition)
+	}
+
+	fmt.Println("Total editions: ", totalEditions)
 }

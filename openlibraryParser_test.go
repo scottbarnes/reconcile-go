@@ -16,7 +16,6 @@ var expEditions = []*OpenLibraryEdition{
 	{"OL16775850M", "seals0000bekk", "", "9781590368930"},
 }
 
-// TestParseOLLine attempts to check for various ways parsing can go wrong.
 func TestParseOLLine(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -148,6 +147,42 @@ func TestReadFile(t *testing.T) {
 				t.Fatalf("expected %v, but got %v", expEditions[i], v)
 			}
 		}
+	}
+}
+
+func TestGetEditions(t *testing.T) {
+	var resEditions []*OpenLibraryEdition
+	chunkSize := int64(1000)
+	editionsCh := make(chan *OpenLibraryEdition)
+	out := os.Stdout
+	inFile := "./testdata/chunkTestData.txt"
+	expEditions := []*OpenLibraryEdition{
+		{olid: "OL001M", ocaid: "IA001", isbn10: "", isbn13: "9788955565683"},
+		{olid: "OL002M", ocaid: "IA002", isbn10: "0135043948", isbn13: "9780135043943"},
+		{olid: "OL16775850M", ocaid: "seals0000bekk", isbn10: "", isbn13: "9781590368930"},
+		{olid: "OL10738135M", ocaid: "temporarymarriag00thor", isbn10: "037310491X", isbn13: "9780373104918"},
+		{olid: "OL10737124M", ocaid: "", isbn10: "0373086970", isbn13: "9780373086979"},
+		{olid: "OL10737484M", ocaid: "onemanslove00lisa", isbn10: "0373093586", isbn13: "9780373093588"},
+		{olid: "OL10737723M", ocaid: "", isbn10: "0373096879", isbn13: "9780373096879"},
+	}
+
+	// Read in editions
+	go func() {
+		for edition := range editionsCh {
+			resEditions = append(resEditions, edition)
+		}
+	}()
+
+	if err := getEditions(inFile, out, editionsCh, chunkSize); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		t.Fatal(err)
+	}
+
+	// for _, v := range resEditions {
+	// 	fmt.Printf("%#v\n", v)
+	// }
+	if !reflect.DeepEqual(expEditions, resEditions) {
+		t.Fatalf("Expected %v, but got %v", expEditions, resEditions)
 	}
 }
 

@@ -141,7 +141,7 @@ func getChunks(chunkSize int64, filename string) ([]*Chunk, error) {
 				chunkEndOffset = currentOffset + int64(i)
 				chunk := NewChunk(filename, chunkStart, chunkEndOffset)
 				chunks = append(chunks, chunk)
-				chunkStart = chunkEndOffset + 1
+				chunkStart = chunkEndOffset + 1 // start on the newline character.
 				break
 			}
 		}
