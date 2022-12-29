@@ -202,46 +202,20 @@ func (c *Chunk) Process(editionsCh chan<- *OpenLibraryEdition, errCh chan<- erro
 	defer f.Close()
 
 	f.Seek(c.start, 0)
-	// var byteCount int64
 	byteCount := int64(-1)
 
-	// var lastByteCount int64
-
 	sc := bufio.NewScanner(f)
-	buf := make([]byte, 1000*1000)
+	buf := make([]byte, 10*1000*1000)
 	sc.Buffer(buf, 1)
 	for sc.Scan() {
-		// buf = nil
 		line := sc.Bytes()
-		// r := bufio.NewReader(f)
-		// r.Reset(r)
-		// for {
 
 		// Keep track of bytes read and exit once the number exceeds c.end.
 		byteCount += int64(len(line) + 1)
 
 		if c.start+byteCount > c.end {
-			// fmt.Println("breaking at chunk limit.")
-			// fmt.Println("last end    ", byteCount)
-			// fmt.Println("Chunk end:  ", c.end)
-			// fmt.Println("Cur end   : ", c.start+byteCount)
 			break
 		}
-
-		if err := sc.Err(); err != nil {
-			errCh <- fmt.Errorf("scanner error: %w", err)
-			continue
-		}
-		// line, err := r.ReadBytes('\n')
-		// if err != nil {
-		// 	if err == io.EOF {
-		// 		fmt.Println("Hit end of file")
-		// 		return
-		// 	}
-
-		// 	errCh <- err
-		// 	continue
-		// }
 
 		edition, err := parseOLLine(line)
 		if err != nil {
@@ -251,18 +225,20 @@ func (c *Chunk) Process(editionsCh chan<- *OpenLibraryEdition, errCh chan<- erro
 			} else {
 				errCh <- err
 			}
-			// }
 		}
 
 		editionsCh <- edition
+	}
+
+	if err := sc.Err(); err != nil {
+		errCh <- fmt.Errorf("error near byte: %v", byteCount)
+		errCh <- fmt.Errorf("scanner error: %w", err)
 	}
 }
 
 func runSeek(inFile string, out io.Writer) error {
 	chunkSize := int64(1000 * 1000 * 1000)
 	// chunkSize := int64(10 * 1000 * 1000)
-	// chunkSize := int64(49 * 1000 * 1000)
-	// chunkSize := int64(1000 * 1000)
 	editionsCh := make(chan *OpenLibraryEdition, 256)
 	errCh := make(chan error, 5)
 	go tempAddEditionsToDB(editionsCh)
@@ -289,13 +265,9 @@ func getEditions(inFile string, out io.Writer, editionsCh chan<- *OpenLibraryEdi
 		return err
 	}
 
-	// for _, chunk := range chunks {
-	// 	fmt.Printf("chunks are: %#v", chunk)
-	// }
-
 	go func() {
 		for _, chunk := range chunks {
-			// fmt.Println(chunk)
+			fmt.Println(chunk)
 			chunksCh <- chunk
 		}
 		defer close(chunksCh)
@@ -343,10 +315,10 @@ func getEditions(inFile string, out io.Writer, editionsCh chan<- *OpenLibraryEdi
 
 func tempAddEditionsToDB(editionsCh <-chan *OpenLibraryEdition) {
 	var totalEditions int
-	for edition := range editionsCh {
-		// for range editionsCh {
+	// for edition := range editionsCh {
+	for range editionsCh {
 		totalEditions++
-		fmt.Println(edition)
+		// fmt.Println(edition.olid)
 	}
 
 	fmt.Println("Total editions: ", totalEditions)
