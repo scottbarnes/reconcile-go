@@ -117,40 +117,6 @@ func TestGetOlidFromKey(t *testing.T) {
 	}
 }
 
-func TestReadFile(t *testing.T) {
-	var resEditions []*OpenLibraryEdition
-
-	errCh := make(chan error)
-	editionsCh := make(chan *OpenLibraryEdition)
-
-	f, err := os.Open("./testdata/seed_ol_dump_latest.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	go func() {
-		defer close(editionsCh)
-		err := readFile(f, editionsCh)
-		if err != nil {
-			errCh <- err
-		}
-	}()
-
-	for edition := range editionsCh {
-		resEditions = append(resEditions, edition)
-	}
-
-	// Check expected vs. results.
-	for i, v := range resEditions {
-		// Only test the first three items in the test data file.
-		if i <= 2 {
-			if !reflect.DeepEqual(expEditions[i], v) {
-				t.Fatalf("expected %v, but got %v", expEditions[i], v)
-			}
-		}
-	}
-}
-
 func TestGetEditions(t *testing.T) {
 	var resEditions []*OpenLibraryEdition
 	chunkSize := int64(1000)
@@ -246,34 +212,34 @@ func TestAddEditionsToDB(t *testing.T) {
 	}
 }
 
-// This is broken and does not appear to reflect actual time/op.
-// For some reason it gets drastically lower time/op the higher the number of iterations are.
-func BenchmarkReadAndParse(b *testing.B) {
-	editionsCh := make(chan *OpenLibraryEdition)
+// // This is broken and does not appear to reflect actual time/op.
+// // For some reason it gets drastically lower time/op the higher the number of iterations are.
+// func BenchmarkReadAndParse(b *testing.B) {
+// 	editionsCh := make(chan *OpenLibraryEdition)
 
-	f, err := os.Open("./testdata/50kTestEditions.txt")
-	if err != nil {
-		b.Fatal(err)
-	}
+// 	f, err := os.Open("./testdata/50kTestEditions.txt")
+// 	if err != nil {
+// 		b.Fatal(err)
+// 	}
 
-	var count int
-	// Just consume editions as fast as possible.
-	go func() {
-		for {
-			count++
-			fmt.Println("count is: ", count)
-			<-editionsCh
-		}
-	}()
+// 	var count int
+// 	// Just consume editions as fast as possible.
+// 	go func() {
+// 		for {
+// 			count++
+// 			fmt.Println("count is: ", count)
+// 			<-editionsCh
+// 		}
+// 	}()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		err := readFile(f, editionsCh)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
+// 	b.ResetTimer()
+// 	for i := 0; i < b.N; i++ {
+// 		err := readFile(f, editionsCh)
+// 		if err != nil {
+// 			b.Fatal(err)
+// 		}
+// 	}
+// }
 
 func BenchmarkAddEditionToDB(b *testing.B) {
 	o := &OpenLibraryEdition{olid: "OL123M", ocaid: "IA123", isbn10: "", isbn13: "1111111111111"}

@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"database/sql"
-	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/buger/jsonparser"
@@ -137,34 +134,6 @@ func parseOLLine(line []byte) (*OpenLibraryEdition, error) {
 	}
 
 	return &o, nil
-}
-
-// readFile() reads a file in chunks and sends them to editionsCh for reading.
-// TODO: Add go routines for the parsing and re-benchmark.
-// May need to adjust buffer/chunk size of reader or scanner. Figure out that interaction.
-func readFile(r io.Reader, editionsCh chan<- *OpenLibraryEdition) error {
-	var count int64
-
-	sc := bufio.NewScanner(r)
-	// const maxCapacity = 1024 * 1024
-	// buf := make([]byte, maxCapacity)
-	// sc.Buffer(buf, maxCapacity)
-	for sc.Scan() {
-		count++
-		text := sc.Bytes()
-		edition, err := parseOLLine(text)
-		if err != nil {
-			if errors.Is(err, ErrorNotEdition) {
-				continue
-			} else {
-				return err
-			}
-		}
-
-		editionsCh <- edition
-	}
-
-	return nil
 }
 
 // getFirstIsbnFromArray() reads a []byte of ISBNs in the form ["12345", "67890"]
