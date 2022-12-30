@@ -120,11 +120,6 @@ func getOlidFromKey(key string) string {
 func parseOLLine(line []byte) (*OpenLibraryEdition, error) {
 	columns := bytes.Split(line, []byte("\t"))
 	if len(columns) != 5 {
-		fmt.Println("start broken record")
-		for _, col := range columns {
-			fmt.Println(string(col))
-		}
-		fmt.Println("end broken")
 		return nil, fmt.Errorf("%v, %w", string(columns[0]), ErrorWrongColCount)
 	}
 

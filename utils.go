@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -86,6 +88,49 @@ func NewChunk(filename string, start int64, end int64) *Chunk {
 	}
 }
 
+func (c *Chunk) Process(editionsCh chan<- *OpenLibraryEdition, errCh chan<- error) {
+	f, err := os.Open(c.filename)
+	if err != nil {
+		errCh <- err
+		return
+	}
+	defer f.Close()
+
+	f.Seek(c.start, 0)
+	byteCount := int64(-1) // Fix off-by-one.
+
+	sc := bufio.NewScanner(f)
+	buf := make([]byte, 10*1000)
+	sc.Buffer(buf, 10*1000*1000)
+	for sc.Scan() {
+		line := sc.Bytes()
+
+		// Keep track of bytes read and exit once the number exceeds c.end.
+		byteCount += int64(len(line) + 1)
+
+		if c.start+byteCount > c.end {
+			break
+		}
+
+		edition, err := parseOLLine(line)
+		if err != nil {
+			// if errors.Is(err, ErrorWrongColCount) || errors.Is(err, ErrorNotEdition) {
+			if errors.Is(err, ErrorNotEdition) {
+				continue
+			} else {
+				errCh <- err
+			}
+		}
+
+		editionsCh <- edition
+	}
+
+	if err := sc.Err(); err != nil {
+		errCh <- fmt.Errorf("error near byte: %v", byteCount)
+		errCh <- fmt.Errorf("scanner error: %w", err)
+	}
+}
+
 // Read a file and break it into chunks of start+end offsets in
 // bytes so that the file can be read in chunks.
 // Chunks start/end on a new line character.
@@ -95,6 +140,7 @@ func getChunks(chunkSize int64, filename string) ([]*Chunk, error) {
 	chunkEndOffset := int64(0)
 	chunkStart := int64(0) // Gets value from previous chunkEndOffset
 	readAheadBuf := make([]byte, readAhead)
+	var fileEnd int64
 
 	f, err := os.Open(filename)
 	if err != nil {
@@ -106,7 +152,7 @@ func getChunks(chunkSize int64, filename string) ([]*Chunk, error) {
 	if err != nil {
 		return nil, err
 	}
-	fileEnd := fstat.Size()
+	fileEnd = fstat.Size()
 
 	// Iterate through the file by chunkSize (plus a bit more to seek for
 	// the newline). Do this by seeking to (near) the new chunkEnd, then
@@ -121,8 +167,8 @@ func getChunks(chunkSize int64, filename string) ([]*Chunk, error) {
 			break
 		}
 
-		// Seek to (near) the new chunkEndOffset, and then fill readAheadBuf
-		// to look for '\n'.
+		// Get into position to look for and of chunk newline by seeking forward
+		// to the approximate end of the chunk.
 		currentOffset, err := f.Seek(chunkEndOffset, 0)
 		if err != nil {
 			return nil, err

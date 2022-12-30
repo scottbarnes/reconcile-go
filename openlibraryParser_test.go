@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3" // See http://go-database-sql.org/importing.html for an explanation of this side effect.
@@ -154,16 +155,17 @@ func TestGetEditions(t *testing.T) {
 	var resEditions []*OpenLibraryEdition
 	chunkSize := int64(1000)
 	editionsCh := make(chan *OpenLibraryEdition)
+	errCh := make(chan error)
 	out := os.Stdout
 	inFile := "./testdata/chunkTestData.txt"
 	expEditions := []*OpenLibraryEdition{
 		{olid: "OL001M", ocaid: "IA001", isbn10: "", isbn13: "9788955565683"},
 		{olid: "OL002M", ocaid: "IA002", isbn10: "0135043948", isbn13: "9780135043943"},
-		{olid: "OL16775850M", ocaid: "seals0000bekk", isbn10: "", isbn13: "9781590368930"},
-		{olid: "OL10738135M", ocaid: "temporarymarriag00thor", isbn10: "037310491X", isbn13: "9780373104918"},
 		{olid: "OL10737124M", ocaid: "", isbn10: "0373086970", isbn13: "9780373086979"},
 		{olid: "OL10737484M", ocaid: "onemanslove00lisa", isbn10: "0373093586", isbn13: "9780373093588"},
 		{olid: "OL10737723M", ocaid: "", isbn10: "0373096879", isbn13: "9780373096879"},
+		{olid: "OL10738135M", ocaid: "temporarymarriag00thor", isbn10: "037310491X", isbn13: "9780373104918"},
+		{olid: "OL16775850M", ocaid: "seals0000bekk", isbn10: "", isbn13: "9781590368930"},
 	}
 
 	// Read in editions
@@ -173,14 +175,16 @@ func TestGetEditions(t *testing.T) {
 		}
 	}()
 
-	if err := getEditions(inFile, out, editionsCh, chunkSize); err != nil {
+	if err := getEditions(inFile, out, editionsCh, errCh, chunkSize); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		t.Fatal(err)
 	}
 
-	// for _, v := range resEditions {
-	// 	fmt.Printf("%#v\n", v)
-	// }
+	// Sort the results into the same (in theory) order as expEditions.
+	sort.Slice(resEditions, func(i, j int) bool {
+		return resEditions[i].olid < resEditions[j].olid
+	})
+
 	if !reflect.DeepEqual(expEditions, resEditions) {
 		t.Fatalf("Expected %v, but got %v", expEditions, resEditions)
 	}
@@ -290,18 +294,3 @@ func BenchmarkAddEditionToDB(b *testing.B) {
 		addEditionsToDB(o, stmt)
 	}
 }
-
-// func BenchmarkUnbufferedChannelEmptyStruct(b *testing.B) {
-// 	ch := make(chan struct{})
-// 	var count int
-// 	go func() {
-// 		for {
-// 			count++
-// 			fmt.Println("count is:", count)
-// 			<-ch
-// 		}
-// 	}()
-// 	for i := 0; i < b.N; i++ {
-// 		ch <- struct{}{}
-// 	}
-// }

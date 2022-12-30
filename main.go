@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -30,17 +27,6 @@ func main() {
 	}
 
 	switch *runType {
-	case "original":
-		// Run the actual program.
-		if err := run(*inFile, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	case "runSeq":
-		if err := runSeq(*inFile, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
 	case "runSeek":
 		if err := runSeek(*inFile, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -49,196 +35,8 @@ func main() {
 	}
 }
 
-func run(inFile string, out io.Writer) error {
-	// Create channels
-	errCh := make(chan error)
-	doneCh := make(chan struct{})
-	editionsCh := make(chan *OpenLibraryEdition)
-
-	// Get database
-	db, err := getDB(DBNAME)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.Open(inFile)
-	if err != nil {
-		return err
-	}
-
-	// Parse the file sending the results to editionsCh for database insertion.
-	go func() {
-		defer close(doneCh)
-		defer close(editionsCh)
-		defer f.Close()
-		err := readFile(f, editionsCh)
-		if err != nil {
-			errCh <- err
-		}
-	}()
-
-	// Read from channels to get errors and recieve + insert DB items
-	for {
-		select {
-		case err := <-errCh:
-			return err
-		case edition := <-editionsCh:
-			// Could this use bundled []editions for performance?
-			if edition == nil {
-				continue
-			}
-
-			stmt, err := db.Prepare("INSERT INTO ol VALUES(NULL, ?, ?, ?)")
-			if err != nil {
-				return err
-			}
-
-			err = addEditionsToDB(edition, stmt)
-			if err != nil {
-				return err
-			}
-		case <-doneCh:
-			// This must come last because this channel is closed in the file parser, but there will always be an edition until that's empty, so it can't get to the doneCh. I think.
-			fmt.Fprintln(out, "All done.")
-			return nil
-		}
-	}
-}
-
-func runSeq(inFile string, out io.Writer) error {
-	f, err := os.Open(inFile)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	linesCh := make(chan []byte, 256)
-	editionsCh := make(chan *OpenLibraryEdition, 256)
-	errCh := make(chan error, 5)
-	doneCh := make(chan struct{})
-	wg := sync.WaitGroup{}
-
-	go func() {
-		defer close(linesCh)
-		// buf := make([]byte, 0, 1024*1024)
-		sc := bufio.NewScanner(f)
-		// sc.Buffer(buf, 100*1024*1024)
-		totalLinesSentToChan := 0
-
-		for sc.Scan() {
-			l := sc.Bytes()
-			columns := bytes.Split(l, []byte("\t"))
-			// if len(columns) != 5 {
-			// 	fmt.Println("inital bad line", columns)
-			// }
-			if len(columns) != 5 {
-				errCh <- fmt.Errorf("%v, %w", string(columns[0]), ErrorWrongColCount)
-				continue
-			}
-
-			editionType := []byte{47, 116, 121, 112, 101, 47, 101, 100, 105, 116, 105, 111, 110}
-			if res := bytes.Compare(columns[0], editionType); res != 0 {
-				errCh <- ErrorNotEdition
-				continue
-			}
-
-			if err := sc.Err(); err != nil {
-				errCh <- fmt.Errorf("scanner error: %w", err)
-				continue
-			}
-
-			blob := columns[4]
-
-			linesCh <- blob
-			totalLinesSentToChan++
-		}
-
-		fmt.Println("total lines sent to channel", totalLinesSentToChan)
-	}()
-
-	for i := 0; i < runtime.NumCPU(); i++ {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
-			// Continually fetch lines packets and iterate through them.
-			for line := range linesCh {
-				edition, err := parseOLLine(line)
-				if err != nil {
-					errCh <- fmt.Errorf("parsing error: %w", err)
-				}
-				editionsCh <- edition
-			}
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(doneCh)
-	}()
-
-	// This would be where they're inserted into the DB, but that's not relevant here.
-	var editionCount int
-	for {
-		select {
-		case err := <-errCh:
-			fmt.Fprintln(out, err)
-		case <-editionsCh:
-			editionCount++
-		case <-doneCh:
-			fmt.Fprintln(out, "total count: ", editionCount)
-			return nil
-		}
-	}
-}
-
-func (c *Chunk) Process(editionsCh chan<- *OpenLibraryEdition, errCh chan<- error) {
-	f, err := os.Open(c.filename)
-	if err != nil {
-		errCh <- err
-		return
-	}
-	defer f.Close()
-
-	f.Seek(c.start, 0)
-	byteCount := int64(-1)
-
-	sc := bufio.NewScanner(f)
-	buf := make([]byte, 10*1000*1000)
-	sc.Buffer(buf, 1)
-	for sc.Scan() {
-		line := sc.Bytes()
-
-		// Keep track of bytes read and exit once the number exceeds c.end.
-		byteCount += int64(len(line) + 1)
-
-		if c.start+byteCount > c.end {
-			break
-		}
-
-		edition, err := parseOLLine(line)
-		if err != nil {
-			// if errors.Is(err, ErrorWrongColCount) || errors.Is(err, ErrorNotEdition) {
-			if errors.Is(err, ErrorNotEdition) {
-				continue
-			} else {
-				errCh <- err
-			}
-		}
-
-		editionsCh <- edition
-	}
-
-	if err := sc.Err(); err != nil {
-		errCh <- fmt.Errorf("error near byte: %v", byteCount)
-		errCh <- fmt.Errorf("scanner error: %w", err)
-	}
-}
-
 func runSeek(inFile string, out io.Writer) error {
 	chunkSize := int64(1000 * 1000 * 1000)
-	// chunkSize := int64(10 * 1000 * 1000)
 	editionsCh := make(chan *OpenLibraryEdition, 256)
 	errCh := make(chan error, 5)
 	go tempAddEditionsToDB(editionsCh)
@@ -267,7 +65,6 @@ func getEditions(inFile string, out io.Writer, editionsCh chan<- *OpenLibraryEdi
 
 	go func() {
 		for _, chunk := range chunks {
-			fmt.Println(chunk)
 			chunksCh <- chunk
 		}
 		defer close(chunksCh)
@@ -294,7 +91,7 @@ func getEditions(inFile string, out io.Writer, editionsCh chan<- *OpenLibraryEdi
 	go func() {
 		wg.Wait()
 		defer close(editionsCh)
-		time.Sleep(2 * time.Second)
+		time.Sleep(200 * time.Millisecond)
 		defer close(doneCh)
 	}()
 
@@ -321,5 +118,5 @@ func tempAddEditionsToDB(editionsCh <-chan *OpenLibraryEdition) {
 		// fmt.Println(edition.olid)
 	}
 
-	fmt.Println("Total editions: ", totalEditions)
+	fmt.Println("Total editions:", totalEditions)
 }

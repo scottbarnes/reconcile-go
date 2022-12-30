@@ -21,7 +21,7 @@ func TestToIsbn13(t *testing.T) {
 
 func BenchmarkRun(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if err := run("./testdata/30kTestEditions.txt", io.Discard); err != nil {
+		if err := runSeek("./testdata/30kTestEditions.txt", io.Discard); err != nil {
 			b.Error(err)
 		}
 	}
@@ -30,7 +30,7 @@ func BenchmarkRun(b *testing.B) {
 func BenchmarkRunSeq(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// if err := runSeq("/home/scott/code/reconcile/files/ol_dump_latest.txt", io.Discard); err != nil {
-		if err := runSeq("./testdata/50kTestEditions.txt", io.Discard); err != nil {
+		if err := runSeek("./testdata/50kTestEditions.txt", io.Discard); err != nil {
 			b.Error(err)
 		}
 	}
