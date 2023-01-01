@@ -121,6 +121,7 @@ func TestGetEditions(t *testing.T) {
 	var resEditions []*OpenLibraryEdition
 	chunkSize := int64(1000)
 	editionsCh := make(chan *OpenLibraryEdition)
+	doneCh := make(chan struct{})
 	errCh := make(chan error)
 	out := os.Stdout
 	inFile := "./testdata/chunkTestData.txt"
@@ -139,9 +140,10 @@ func TestGetEditions(t *testing.T) {
 		for edition := range editionsCh {
 			resEditions = append(resEditions, edition)
 		}
+		defer close(doneCh)
 	}()
 
-	if err := getEditions(inFile, out, editionsCh, errCh, chunkSize); err != nil {
+	if err := getEditions(inFile, out, editionsCh, doneCh, errCh, chunkSize); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		t.Fatal(err)
 	}
@@ -153,62 +155,6 @@ func TestGetEditions(t *testing.T) {
 
 	if !reflect.DeepEqual(expEditions, resEditions) {
 		t.Fatalf("Expected %v, but got %v", expEditions, resEditions)
-	}
-}
-
-func TestAddEditionsToDB(t *testing.T) {
-	dbName := ":memory:"
-	db, err := getDB(dbName)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	testEditions := expEditions
-	expDBItems := []struct {
-		olid   string
-		ocaid  string
-		isbn13 string
-	}{
-		{"OL001M", "IA001", "9788955565683"},
-		{"OL002M", "IA002", "9780135043943"},
-		{"OL16775850M", "seals0000bekk", "9781590368930"},
-	}
-
-	stmt, err := db.Prepare("INSERT INTO ol VALUES(NULL, ?, ?, ?)")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, edition := range testEditions {
-		addEditionsToDB(edition, stmt)
-	}
-
-	// Query DB to get items added from channel.
-	rows, err := db.Query("SELECT * FROM ol")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Throw away variable because rows.Scan() needs to assign all the values.
-	count := 0
-	for rows.Next() {
-		exp := struct {
-			olid   string
-			ocaid  string
-			isbn13 string
-		}{}
-		id := 0
-
-		err := rows.Scan(&id, &exp.olid, &exp.ocaid, &exp.isbn13)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if !reflect.DeepEqual(exp, expDBItems[count]) {
-			t.Fatalf("expected %v, but got %v", exp, expDBItems[count])
-		}
-
-		count++
 	}
 }
 
@@ -241,22 +187,150 @@ func TestAddEditionsToDB(t *testing.T) {
 // 	}
 // }
 
-func BenchmarkAddEditionToDB(b *testing.B) {
-	o := &OpenLibraryEdition{olid: "OL123M", ocaid: "IA123", isbn10: "", isbn13: "1111111111111"}
+// func BenchmarkAddEditionToDB(b *testing.B) {
+//   o := &OpenLibraryEdition{olid: "OL123M", ocaid: "IA123", isbn10: "", isbn13: "1111111111111"}
+
+// 	// const TESTDB string = "reconcile-go.db?_sync=0&_journal=WAL"
+// 	const TESTDB = ":memory:?_sync=0&_journal=WAL"
+// 	db, err := getDB(TESTDB)
+// 	if err != nil {
+// 		b.Fatal(err)
+// 	}
+
+// 	stmt, err := db.Prepare("INSERT INTO ol VALUES(NULL, ?, ?, ?)")
+// 	if err != nil {
+// 		b.Fatal(err)
+// 	}
+
+// 	b.ResetTimer()
+// 	for i := 0; i < b.N; i++ {
+// 		addEditionToDB(o, stmt)
+// 	}
+// }
+
+func TestAddEditionToDBBatch(t *testing.T) {
+	editionsCh := make(chan *OpenLibraryEdition)
+	doneCh := make(chan struct{})
+	// Make some editions to send to the batcher.
+	type expDBItem struct {
+		olid   string
+		ocaid  string
+		isbn13 string
+	}
+
+	expDBItems := []*OpenLibraryEdition{}
+
+	go func() {
+		defer close(editionsCh)
+
+		// Use 13 items here with a batch size of 5 to ensure "underflow"
+		// batches are handled.
+		for i := 0; i < 13; i++ {
+			olid := fmt.Sprintf("OL%dM", i)
+			ocaid := fmt.Sprintf("IA%d", i)
+			isbn10 := ""
+			isbn13 := fmt.Sprintf("%d", i)
+
+			// Use the same data to build the editions and expeted DB items.
+			edition := NewOpenLibraryEdition(olid, ocaid, isbn10, isbn13)
+			expDBItems = append(expDBItems, edition)
+
+			editionsCh <- edition
+		}
+	}()
+
+	// DB to hold added editions
 	// const TESTDB string = "reconcile-go.db?_sync=0&_journal=WAL"
 	const TESTDB = ":memory:?_sync=0&_journal=WAL"
 	db, err := getDB(TESTDB)
 	if err != nil {
-		b.Fatal(err)
+		t.Fatal(err)
 	}
 
-	stmt, err := db.Prepare("INSERT INTO ol VALUES(NULL, ?, ?, ?)")
+	if err = addEditionToDBBatch(editionsCh, doneCh, db, 5); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ensure the DB row count is the same as expected.
+	resCount, err := db.Query("SELECT COUNT(*) FROM ol")
 	if err != nil {
-		b.Fatal(err)
+		t.Fatal(err)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		addEditionsToDB(o, stmt)
+	for resCount.Next() {
+		var rowCount int
+
+		if err = resCount.Scan(&rowCount); err != nil {
+			t.Fatal(err)
+		}
+
+		if rowCount != len(expDBItems) {
+			t.Fatalf("Expected %d rows in the test DB, but got %d", len(expDBItems), rowCount)
+		}
 	}
+
+	// Query DB to get items added from channel for item by item comparison.
+	rows, err := db.Query("SELECT edition_id, ocaid, isbn_13 FROM ol")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Throw away variable because rows.Scan() needs to assign all the values.
+	count := 0
+	for rows.Next() {
+		resEdition := NewOpenLibraryEdition("", "", "", "")
+
+		err := rows.Scan(&resEdition.olid, &resEdition.ocaid, &resEdition.isbn13)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !reflect.DeepEqual(resEdition, expDBItems[count]) {
+			t.Fatalf("expected %#v, but got %#v", resEdition, expDBItems[count])
+		}
+
+		count++
+	}
+
+	// editionsBatch1 := editions[:10]
+	// editionsBatch2 := editions[10:20]
+	// editionsBatch3 := editions[20:]
+
+	// batches := [][]*OpenLibraryEdition{editionsBatch1, editionsBatch2, editionsBatch3}
+
+	// for i := range batches {
+	// 	fmt.Fprint(io.Discard, i)
+	// }
+
+	// var values []interface{}
+	// values = append(values, nil, o[0].olid, o[0].ocaid, o[0].isbn13)
+	// values = append(values, nil, o[1].olid, o[1].ocaid, o[1].isbn13)
+	// // values = append(values, o[2].olid, o[2].ocaid, o[2].isbn10, o[2].isbn13)
+
+	// const TESTDB string = "reconcile-go.db?_sync=0&_journal=WAL"
+	// // const TESTDB = ":memory:?_sync=0&_journal=WAL"
+	// db, err := getDB(TESTDB)
+	// if err != nil {
+	// 	t.Fatal(err)
+	// }
+
+	// // stmt, err := db.Prepare("INSERT INTO ol VALUES(NULL, ?, ?, ?)")
+	// // if err != nil {
+	// // 	b.Fatal(err)
+	// // }
+	// // stmt, err := db.Prepare("INSERT INTO ol VALUES(NULL, ?, ?, ?)")
+
+	// // b.ResetTimer()
+	// // for i := 0; i < b.N; i++ {
+	// // addEditionToDBBatch(values, db)
+	// valueStrings := []string{"(?, ?, ?, ?)"}
+	// valueStrings = append(valueStrings, "(?, ?, ?, ?)")
+	// fmt.Println("values strings are:", strings.Join(valueStrings, ","))
+	// fmt.Println("values are:", values)
+	// stmt := fmt.Sprintf("INSERT INTO ol (id, edition_id, ocaid, isbn_13) VALUES %s", strings.Join(valueStrings, ","))
+	// _, err = db.Exec(stmt, values...)
+	// if err != nil {
+	// 	t.Fatal(err)
+	// 	// }
+	// }
 }

@@ -4,16 +4,14 @@ RECONCILE-GO
 A reimplementation (somewhat) of [reconcile](https://github.com/scottbarnes/reconcile).
 
 ## To do
-- Write the program.
-- Finish debugging index errors.
-- Get ability to parse whole file, then get a 30 MB or so section of editions to use as a test.
+- Close vim and start it over
 - Benchmark that and go from there with optimization.
 
 ## Features
 - Parse OL All dump.
-  - Read file in chunks via goroutines.
+  <!-- - Read file in chunks via goroutines. -->
   <!-- - Parse chunks, send completed *OpenLibraryEditions to channel -->
-  - Function to add to DB, which reads from a channel.
+  <!-- - Function to add to DB, which reads from a channel. -->
 - Parse JSONL-maybe dump.
 - Put results in database.
 <!-- - Convert to ISBN 13 -->

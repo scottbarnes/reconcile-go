@@ -7,12 +7,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
-	"time"
 )
-
-// Set some SQLite options, per https://avi.im/blag/2021/fast-sqlite-inserts/
-// sqlite3 options at https://github.com/mattn/go-sqlite3#connection-string
-const DBNAME string = "reconcile-go.db?_sync=0&_journal=WAL"
 
 func main() {
 	// Flags
@@ -37,19 +32,35 @@ func main() {
 
 func runSeek(inFile string, out io.Writer) error {
 	chunkSize := int64(1000 * 1000 * 1000)
+	doneCh := make(chan struct{})
 	editionsCh := make(chan *OpenLibraryEdition, 256)
 	errCh := make(chan error, 5)
-	go tempAddEditionsToDB(editionsCh)
-	if err := getEditions(inFile, out, editionsCh, errCh, chunkSize); err != nil {
+	dbName := DBNAME
+
+	// Get a DB
+	db, err := getDB(dbName)
+	if err != nil {
 		return err
 	}
+
+	// Add editions from editionsCh
+	go func() {
+		addEditionToDBBatch(editionsCh, doneCh, db, 250)
+	}()
+
+	if err := getEditions(inFile, out, editionsCh, doneCh, errCh, chunkSize); err != nil {
+		return err
+	}
+
+	// Block until done
+	<-doneCh
 
 	return nil
 }
 
-func getEditions(inFile string, out io.Writer, editionsCh chan<- *OpenLibraryEdition, errCh chan error, chunkSize int64) error {
+func getEditions(inFile string, out io.Writer, editionsCh chan<- *OpenLibraryEdition, doneCh <-chan struct{}, errCh chan error, chunkSize int64) error {
 	chunksCh := make(chan *Chunk, 20)
-	doneCh := make(chan struct{})
+	// doneCh := make(chan struct{})
 	wg := sync.WaitGroup{}
 
 	f, err := os.Open(inFile)
@@ -81,18 +92,16 @@ func getEditions(inFile string, out io.Writer, editionsCh chan<- *OpenLibraryEdi
 			// Each GoRoutine grabs chunks until there are no more.
 			for chunk := range chunksCh {
 				chunk.Process(editionsCh, errCh)
-				// chunk.Print()
 			}
 		}()
 	}
 
 	// Once all the chunk.Process GoRoutines finish, no more editions
-	// will be sent to editionsCh.
+	// will be sent to editionsCh. Closing the channel tells addEditionToDBBatch
+	// that there are no more editions to add to the DB.
 	go func() {
 		wg.Wait()
 		defer close(editionsCh)
-		time.Sleep(200 * time.Millisecond)
-		defer close(doneCh)
 	}()
 
 	// This would be where they're inserted into the DB, but that's not relevant here.
@@ -101,22 +110,8 @@ func getEditions(inFile string, out io.Writer, editionsCh chan<- *OpenLibraryEdi
 		select {
 		case err := <-errCh:
 			fmt.Fprintln(out, err)
-		// case <-editionsCh:
-		// 	editionCount++
 		case <-doneCh:
-			// fmt.Fprintln(out, "total count: ", editionCount)
 			return nil
 		}
 	}
-}
-
-func tempAddEditionsToDB(editionsCh <-chan *OpenLibraryEdition) {
-	var totalEditions int
-	// for edition := range editionsCh {
-	for range editionsCh {
-		totalEditions++
-		// fmt.Println(edition.olid)
-	}
-
-	fmt.Println("Total editions:", totalEditions)
 }
